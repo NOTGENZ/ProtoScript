@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Protoscript </title>
+  <style>
+    body { font-family: monospace; background: #111; color: #fff; padding: 1em; }
+    textarea { width: 100%; height: 200px; background: #222; color: #0f0; border: none; padding: 1em; }
+    button { margin: 0.5em 0; padding: 0.5em 1em; background: #333; color: #fff; border: none; cursor: pointer; }
+    #rendered { margin-top: 1em; border: 1px dashed #555; padding: 1em; }
+    input[type="file"] { margin-top: 1em; }
+  </style>
+</head>
+<body>
+
+<h2> Protoscript </h2>
+
+<!-- File upload input for .ps files -->
+<input type="file" accept=".ps" id="uploadPsFile" />
+<br>
+<textarea id="script" placeholder="Write Protoscript code here..."></textarea><br>
+<button onclick="runScript()">▶️ Run</button>
+<button onclick="downloadScript()">💾 Download</button>
+
+<h3> Output</h3>
+<div id="rendered"></div>
+
+<script>
+  const variables = {};
+  const functions = {};
+  const imports = {}; // For handling imports
+
+  // Event listener for file upload
+  document.getElementById("uploadPsFile").addEventListener("change", function (event) {
+    const file = event.target.files[0];
+    if (file && file.name.endsWith(".ps")) {
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const code = e.target.result;
+        document.getElementById("script").value = code;  // Show code in the textarea
+        runProtoscript(code); // Run the uploaded Protoscript file
+      };
+      reader.readAsText(file);
+    } else {
+      alert("Please upload a valid .ps Protoscript file.");
+    }
+  });
+
+  function runScript() {
+    document.getElementById("rendered").innerHTML = "";
+    Object.keys(variables).forEach(k => delete variables[k]);
+
+    const script = document.getElementById("script").value;
+    const cleaned = script.replace(/!![\s\S]*?!!/g, ''); // Remove comments
+    const lines = cleaned.split(/[\n;]/).map(l => l.trim()).filter(Boolean);
+
+    let bracketCount = 0; // To track open brackets
+    let lineNumber = 1; // To show line number in errors
+
+    try {
+      for (let line of lines) {
+        // Bracket Checking: Ensure all brackets are closed
+        if (line.includes("{")) bracketCount++;
+        if (line.includes("}")) bracketCount--;
+
+        // If brackets are mismatched
+        if (bracketCount < 0) {
+          addToRender(`🛑 Bracket doesn't close in line ${lineNumber}`);
+          return;
+        }
+
+        // Variables: $v(name;value)
+        if (line.startsWith('$v(')) {
+          const [_, name, val] = line.match(/\$v\(([^;]+);(.*)\)/) || [];
+          if (name) variables[name] = val;
+        }
+
+        // Print: $p[message]
+        else if (line.startsWith('$p[')) {
+          const content = line.match(/\$p\[(.*?)\]/)?.[1];
+          const out = content.replace(/\$([a-zA-Z_]\w*)/g, (_, v) => variables[v] || `[undefined:${v}]`);
+          addToRender(out);
+        }
+
+        // DOM Elements: $div[text], $button[text], $h1[text], etc.
+        else if (/\$(div|h1|p|span|button)\[(.*?)\]/.test(line)) {
+          const [, tag, text] = line.match(/\$(\w+)\[(.*?)\]/);
+          const el = document.createElement(tag);
+          el.textContent = text.replace(/\$([a-zA-Z_]\w*)/g, (_, v) => variables[v] || `[undefined:${v}]`);
+          el.id = "el" + Math.floor(Math.random() * 9999); // random id
+          document.getElementById("rendered").appendChild(el);
+        }
+
+        // DOM Set: $set(id;text)
+        else if (line.startsWith('$set(')) {
+          const [_, id, text] = line.match(/\$set\(([^;]+);(.*)\)/) || [];
+          if (id && text) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = text.replace(/\$([a-zA-Z_]\w*)/g, (_, v) => variables[v] || '');
+          }
+        }
+
+        // Event handler: $on(id;event;{ code })
+        else if (line.startsWith('$on(')) {
+          const [_, id, evt, body] = line.match(/\$on\(([^;]+);([^;]+);\{([\s\S]*)\}\)/) || [];
+          const el = document.getElementById(id);
+          if (el && body) {
+            el.addEventListener(evt, () => runScriptFromString(body));
+          }
+        }
+
+        // Function: $f(name){ code }
+        else if (line.startsWith('$f(')) {
+          const [_, name] = line.match(/\$f\((\w+)\)/) || [];
+          const body = line.match(/\{([\s\S]*)\}/)?.[1];
+          if (name && body) functions[name] = body;
+        }
+
+        // Call function: $call(name)
+        else if (line.startsWith('$call(')) {
+          const name = line.match(/\$call\((\w+)\)/)?.[1];
+          if (functions[name]) runScriptFromString(functions[name]);
+        }
+
+        // If-Else: $if(condition){ code } or $else{ code }
+        else if (line.startsWith('$if(')) {
+          const [_, condition] = line.match(/\$if\((.*?)\)/) || [];
+          const body = line.match(/\{([\s\S]*)\}/)?.[1];
+          if (condition && body) {
+            if (eval(condition)) { runScriptFromString(body); }
+          }
+        }
+        else if (line.startsWith('$else')) {
+          const body = line.match(/\{([\s\S]*)\}/)?.[1];
+          if (body) runScriptFromString(body);
+        }
+
+        // Error handling: $error(message)
+        else if (line.startsWith('$error(')) {
+          const [_, message] = line.match(/\$error\((.*?)\)/) || [];
+          if (message) {
+            addToRender(`🛑 Error: ${message}`);
+          }
+        }
+
+        // Importing external code/words: $import(file)
+        else if (line.startsWith('$import(')) {
+          const [_, file] = line.match(/\$import\((.*?)\)/) || [];
+          if (file) {
+            if (imports[file]) {
+              addToRender(`✅ Imported ${file}`);
+              runScriptFromString(imports[file]);
+            } else {
+              addToRender(`❌ Error: ${file} not found`);
+            }
+          }
+        }
+
+        // Script Include: $script(file1;file2)
+        else if (line.startsWith('$script(')) {
+          const files = line.match(/\$script\((.*?)\)/)?.[1].split(';') || [];
+          files.forEach(file => {
+            if (file.endsWith(".html") || file.endsWith(".css")) {
+              fetch(file)
+                .then(response => response.text())
+                .then(data => {
+                  imports[file] = data;
+                  addToRender(`✅ Included: ${file}`);
+                })
+                .catch(err => addToRender(`❌ Error loading ${file}: ${err.message}`));
+            }
+          });
+        }
+
+        // Help
+        else if (line === 'help') {
+          addToRender(`Protoscript v2 Commands:
+$v(name;value)       - Define variable
+$p[text]             - Print to screen
+$div[text]           - Create <div> with text
+$button[text]        - Create button
+$on(id;event;{code}) - Add event listener
+$set(id;text)        - Set text of element
+$f(name){code}       - Define function
+$call(name)          - Call function
+$if(condition){code} - If statement
+$else{code}          - Else statement
+$error(message)      - Error handling
+$import(file)        - Import external code or words
+$script(file1;file2) - Import external files (HTML/CSS)
+`);
+        }
+
+        // Checking if bracket count is mismatched at the end
+        if (bracketCount > 0) {
+          addToRender(`🛑 Bracket doesn't close in line ${lineNumber}`);
+          return;
+        }
+        lineNumber++;
+      }
+    } catch (e) {
+      addToRender(`🛑 Execution failed: ${e.message}`);
+    }
+  }
+
+  function runScriptFromString(code) {
+    const temp = document.createElement('textarea');
+    temp.value = code;
+    document.body.appendChild(temp);
+    document.getElementById("script").value = code;
+    runScript();
+    document.body.removeChild(temp);
+  }
+
+  function addToRender(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    document.getElementById("rendered").appendChild(div);
+  }
+
+  function downloadScript() {
+    const content = document.getElementById("script").value;
+    const blob = new Blob([content], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = "protoscript.ps"; // Changed extension to .ps
+    a.click();
+  }
+</script>
+
+</body>
+</html>
