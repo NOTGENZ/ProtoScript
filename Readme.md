@@ -7,7 +7,7 @@
 - Import HTML, CSS, and other `.ps` files directly  
 - Simple variable and function system
 ## How To Start?
-- To Start Use **help** this language doesn't support both uppercase and lowercase.
+- To Start Use **help** don't use uppercase with **help** command.
 
 ## Features
 
