@@ -29,10 +29,6 @@
 
 ## Example
 
-```protoscript
-$v(name;Protoscript)
-$p[Welcome to $v.name]
-$function greet {
-  $p[Hello from $v.name!]
-}
-$f(greet)
+```
+!!You can also Import .ps file!!
+$p[Hello,World!]
