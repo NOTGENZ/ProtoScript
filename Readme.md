@@ -24,7 +24,7 @@
 ## Getting Started
 
 1. Clone or download this repo  
-2. Open `index.html` in your browser  
+2. Open `ProtoScript.html` in your browser  
 3. Write your code in the editor and click "Run"
 
 ## Example
